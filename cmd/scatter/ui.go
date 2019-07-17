@@ -862,7 +862,7 @@ func (p *threadsPage) Layout(ops *ui.Ops, cs layout.Constraints) layout.Dimens {
 		{
 			var t Topbar
 			cs = t.Begin(p.env, ops, cs)
-			dims = text.Label{Material: theme.white, Face: p.env.faces.For(fonts.regular, ui.Sp(20)), Text: "Scatter - " + p.account.User}.Layout(ops, cs)
+			dims = text.Label{Material: theme.white, Face: p.env.faces.For(fonts.regular, ui.Sp(20)), Text: p.account.User}.Layout(ops, cs)
 			dims = t.End(dims)
 		}
 		c3 := f.End(dims)
