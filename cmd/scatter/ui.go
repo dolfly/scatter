@@ -228,8 +228,7 @@ func colorMaterial(ops *ui.Ops, color color.RGBA) ui.MacroOp {
 }
 
 func (a *App) run() error {
-	updates := a.env.client.register(a)
-	defer a.env.client.unregister(a)
+	var updates <-chan struct{}
 	ops := new(ui.Ops)
 	for {
 		select {
@@ -259,8 +258,15 @@ func (a *App) run() error {
 			case app.DestroyEvent:
 				return e.Err
 			case app.StageEvent:
-				if e.Stage >= app.StageRunning && a.stack.Len() == 0 {
-					a.stack.Push(newThreadsPage(a.env))
+				if e.Stage >= app.StageRunning {
+					if a.env.client == nil {
+						a.env.client = getClient()
+						updates = a.env.client.register(a)
+						defer a.env.client.unregister(a)
+					}
+					if a.stack.Len() == 0 {
+						a.stack.Push(newThreadsPage(a.env))
+					}
 				}
 			case *app.CommandEvent:
 				switch e.Type {
@@ -290,7 +296,6 @@ func (a *App) run() error {
 func newApp(w *app.Window) *App {
 	a := &App{
 		env: &Env{
-			client: getClient(),
 			cfg:    new(app.Config),
 			inputs: w.Queue(),
 			redraw: w.Redraw,
@@ -1217,7 +1222,7 @@ func (p *threadPage) message(ops *ui.Ops, cs layout.Constraints, index int) layo
 				checkmark := p.checkmark.image(c, timecol)
 				r := checkmark.Bounds()
 				if msg.Sent {
-					gdraw.ImageOp{Img: checkmark, Rect: r}.Add(ops)
+					gdraw.ImageOp{Src: checkmark, Rect: r}.Add(ops)
 					gdraw.DrawOp{Rect: toRectF(r)}.Add(ops)
 				}
 				dims = layout.Dimens{Size: r.Size()}

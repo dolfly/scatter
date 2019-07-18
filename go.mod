@@ -3,7 +3,7 @@ module scatter.im
 go 1.13
 
 require (
-	gioui.org/ui v0.0.0-20190716115357-b4441a8728e5
+	gioui.org/ui v0.0.0-20190718135811-84fb7279eb3b
 	github.com/eliasnaur/libsignal-protocol-go v0.0.0-20190626062856-3295f72b181e
 	github.com/emersion/go-imap v1.0.0-rc.1
 	github.com/emersion/go-imap-idle v0.0.0-20190519112320-2704abd7050e

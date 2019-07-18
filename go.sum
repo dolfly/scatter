@@ -1,5 +1,5 @@
-gioui.org/ui v0.0.0-20190716115357-b4441a8728e5 h1:qAZ/M+UgZYEXjBZZsKPUrPAMpHCelfeh9av5DOfA7DM=
-gioui.org/ui v0.0.0-20190716115357-b4441a8728e5/go.mod h1:jbaSHnW/jO2+8gOhOraRz7/3A2tntNzXF9nra6FUOr4=
+gioui.org/ui v0.0.0-20190718135811-84fb7279eb3b h1:Vx4uqYcGV3i4J12eTeVJwouOgRSrL8ZIaQWeDjcnZnM=
+gioui.org/ui v0.0.0-20190718135811-84fb7279eb3b/go.mod h1:jbaSHnW/jO2+8gOhOraRz7/3A2tntNzXF9nra6FUOr4=
 github.com/BurntSushi/xgb v0.0.0-20160522181843-27f122750802/go.mod h1:IVnqGOEym/WlBOVXweHU+Q+/VP0lqqI8lqeDx9IjBqo=
 github.com/RadicalApp/complete v0.0.0-20170329192659-17e6c0ee499b h1:cAULFohNVfNzco0flF4okSPg3s7/tCj+hMIldtYZo4c=
 github.com/RadicalApp/complete v0.0.0-20170329192659-17e6c0ee499b/go.mod h1:zZ3+l0EkpT2ZPnoamPBG50PBUtQrXwwyJ6elQZMmqgk=
