@@ -237,7 +237,7 @@ func (a *App) run() error {
 				log.Printf("client err: %v", err)
 				a.stack.Clear(newSignInPage(a.env))
 			}
-			a.w.Redraw()
+			a.w.Invalidate()
 		case e := <-a.w.Events():
 			switch e := e.(type) {
 			case key.ChordEvent:
@@ -245,14 +245,14 @@ func (a *App) run() error {
 				case key.NameEscape:
 					if a.stack.Len() > 1 {
 						a.stack.Pop()
-						a.w.Redraw()
+						a.w.Invalidate()
 					} else {
 						os.Exit(0)
 					}
 				case 'P':
 					if e.Modifiers&key.ModCommand != 0 {
 						a.profiling = !a.profiling
-						a.w.Redraw()
+						a.w.Invalidate()
 					}
 				}
 			case app.DestroyEvent:
@@ -274,7 +274,7 @@ func (a *App) run() error {
 					if a.stack.Len() > 1 {
 						a.stack.Pop()
 						e.Cancel = true
-						a.w.Redraw()
+						a.w.Invalidate()
 					}
 				}
 			case app.DrawEvent:
@@ -298,7 +298,7 @@ func newApp(w *app.Window) *App {
 		env: &Env{
 			cfg:    new(app.Config),
 			inputs: w.Queue(),
-			redraw: w.Redraw,
+			redraw: w.Invalidate,
 		},
 		w: w,
 	}
