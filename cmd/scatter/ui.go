@@ -900,7 +900,17 @@ func (p *threadsPage) layoutThreads(ops *ui.Ops, cs layout.Constraints) layout.D
 		key.HideInputOp{}.Add(ops)
 	}
 	for l.Init(ops, cs, len(p.threads)); l.More(); l.Next() {
-		l.Elem(p.thread(ops, l.Constraints(), l.Index()))
+		in := layout.Inset{}
+		switch l.Index() {
+		case 0:
+			in.Top = ui.Dp(4)
+		case len(p.threads) - 1:
+			in.Bottom = ui.Dp(4)
+		}
+		cs := in.Begin(p.env.cfg, ops, l.Constraints())
+		dims := p.thread(ops, cs, l.Index())
+		dims = in.End(dims)
+		l.Elem(dims)
 	}
 	dims := l.Layout()
 	return dims
