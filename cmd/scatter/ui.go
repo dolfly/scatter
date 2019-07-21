@@ -8,7 +8,6 @@ import (
 	"image/color"
 	"log"
 	"math"
-	"os"
 	"runtime"
 	"strings"
 	"time"
@@ -40,17 +39,15 @@ import (
 )
 
 type Env struct {
-	cfg    *app.Config
 	insets app.Insets
-	inputs input.Queue
-	faces  *measure.Faces
+	faces  measure.Faces
 	client *Client
 	redraw func()
 }
 
 type App struct {
-	env *Env
 	w   *app.Window
+	env Env
 
 	stack pageStack
 
@@ -67,8 +64,8 @@ type pageStack struct {
 
 type Page interface {
 	Start(stop <-chan struct{})
-	Event() interface{}
-	Layout(ops *ui.Ops, cs layout.Constraints) layout.Dimens
+	Event(c ui.Config, q input.Queue) interface{}
+	Layout(c ui.Config, q input.Queue, ops *ui.Ops, cs layout.Constraints) layout.Dimens
 }
 
 type signInPage struct {
@@ -230,12 +227,13 @@ func colorMaterial(ops *ui.Ops, color color.RGBA) ui.MacroOp {
 func (a *App) run() error {
 	var updates <-chan struct{}
 	ops := new(ui.Ops)
+	var cfg ui.Config
 	for {
 		select {
 		case <-updates:
 			if err := a.env.client.Err(); err != nil {
 				log.Printf("client err: %v", err)
-				a.stack.Clear(newSignInPage(a.env))
+				a.stack.Clear(newSignInPage(&a.env))
 			}
 			a.w.Invalidate()
 		case e := <-a.w.Events():
@@ -246,8 +244,6 @@ func (a *App) run() error {
 					if a.stack.Len() > 1 {
 						a.stack.Pop()
 						a.w.Invalidate()
-					} else {
-						os.Exit(0)
 					}
 				case 'P':
 					if e.Modifiers&key.ModCommand != 0 {
@@ -265,7 +261,7 @@ func (a *App) run() error {
 						defer a.env.client.unregister(a)
 					}
 					if a.stack.Len() == 0 {
-						a.stack.Push(newThreadsPage(a.env))
+						a.stack.Push(newThreadsPage(&a.env))
 					}
 				}
 			case *app.CommandEvent:
@@ -279,15 +275,16 @@ func (a *App) run() error {
 				}
 			case app.DrawEvent:
 				ops.Reset()
-				*a.env.cfg = e.Config
+				cfg = &e.Config
+				q := a.w.Queue()
+				a.env.faces.Reset(cfg)
 				a.env.insets = e.Insets
 				cs := layout.RigidConstraints(e.Size)
-				a.Layout(ops, cs)
+				a.Layout(cfg, q, ops, cs)
 				if a.profiling {
-					a.layoutTimings(ops, cs)
+					a.layoutTimings(cfg, q, ops, cs)
 				}
 				a.w.Draw(ops)
-				a.env.faces.Frame()
 			}
 		}
 	}
@@ -295,14 +292,9 @@ func (a *App) run() error {
 
 func newApp(w *app.Window) *App {
 	a := &App{
-		env: &Env{
-			cfg:    new(app.Config),
-			inputs: w.Queue(),
-			redraw: w.Invalidate,
-		},
 		w: w,
 	}
-	a.env.faces = &measure.Faces{Config: a.env.cfg}
+	a.env.redraw = a.w.Invalidate
 	return a
 }
 
@@ -366,20 +358,19 @@ func argb(c uint32) color.RGBA {
 	return color.RGBA{A: uint8(c >> 24), R: uint8(c >> 16), G: uint8(c >> 8), B: uint8(c)}
 }
 
-func (a *App) Layout(ops *ui.Ops, cs layout.Constraints) layout.Dimens {
-	a.update()
-	return a.stack.Current().Layout(ops, cs)
+func (a *App) Layout(c ui.Config, q input.Queue, ops *ui.Ops, cs layout.Constraints) layout.Dimens {
+	a.update(c, q)
+	return a.stack.Current().Layout(c, q, ops, cs)
 }
 
-func (a *App) layoutTimings(ops *ui.Ops, cs layout.Constraints) layout.Dimens {
-	for _, e := range a.env.inputs.Events(a) {
+func (a *App) layoutTimings(c ui.Config, q input.Queue, ops *ui.Ops, cs layout.Constraints) layout.Dimens {
+	for _, e := range q.Events(a) {
 		if e, ok := e.(system.ProfileEvent); ok {
 			a.profile = e
 		}
 	}
 
 	system.ProfileOp{Key: a}.Add(ops)
-	c := a.env.cfg
 	var mstats runtime.MemStats
 	runtime.ReadMemStats(&mstats)
 	mallocs := mstats.Mallocs - a.lastMallocs
@@ -401,13 +392,9 @@ func newContactsPage(env *Env) *contactsPage {
 	p := &contactsPage{
 		env: env,
 		list: &layout.List{
-			Config: env.cfg,
-			Inputs: env.inputs,
-			Axis:   layout.Vertical,
+			Axis: layout.Vertical,
 		},
 		searchEdit: &text.Editor{
-			Config:       env.cfg,
-			Inputs:       env.inputs,
 			Face:         env.faces.For(fonts.regular, ui.Sp(20)),
 			SingleLine:   true,
 			Submit:       true,
@@ -425,9 +412,9 @@ func newContactsPage(env *Env) *contactsPage {
 
 func (p *contactsPage) Start(stop <-chan struct{}) {}
 
-func (p *contactsPage) Event() interface{} {
+func (p *contactsPage) Event(c ui.Config, q input.Queue) interface{} {
 	for {
-		e, ok := p.searchEdit.Next()
+		e, ok := p.searchEdit.Next(c, q)
 		if !ok {
 			break
 		}
@@ -446,13 +433,13 @@ func (p *contactsPage) Event() interface{} {
 	default:
 	}
 	for i := range p.clicks {
-		for _, e := range p.clicks[i].Events(p.env.inputs) {
+		for _, e := range p.clicks[i].Events(q) {
 			if e.Type == gesture.TypeClick {
 				return NewThreadEvent{p.contacts[i].Address}
 			}
 		}
 	}
-	return p.topbar.Event(p.env.inputs)
+	return p.topbar.Event(c, q)
 }
 
 func isEmailAddress(e string) bool {
@@ -480,9 +467,8 @@ func (p *contactsPage) queryContacts(q string) {
 	}()
 }
 
-func (p *contactsPage) Layout(ops *ui.Ops, cs layout.Constraints) layout.Dimens {
-	c := p.env.cfg
-	for e := p.Event(); e != nil; e = p.Event() {
+func (p *contactsPage) Layout(c ui.Config, q input.Queue, ops *ui.Ops, cs layout.Constraints) layout.Dimens {
+	for e := p.Event(c, q); e != nil; e = p.Event(c, q) {
 	}
 	l := p.list
 	if l.Dragging() {
@@ -493,8 +479,8 @@ func (p *contactsPage) Layout(ops *ui.Ops, cs layout.Constraints) layout.Dimens 
 	var dims layout.Dimens
 	cs = f.Rigid()
 	{
-		cs = p.topbar.Begin(p.env, ops, cs)
-		dims = p.searchEdit.Layout(ops, cs)
+		cs = p.topbar.Begin(c, p.env.insets, ops, cs)
+		dims = p.searchEdit.Layout(c, q, ops, cs)
 		dims = p.topbar.End(dims)
 	}
 	c1 := f.End(dims)
@@ -505,8 +491,8 @@ func (p *contactsPage) Layout(ops *ui.Ops, cs layout.Constraints) layout.Dimens 
 		Right: p.env.insets.Right,
 	}
 	cs = sysInset.Begin(c, ops, cs)
-	for l.Init(ops, cs, len(p.contacts)); l.More(); l.Next() {
-		l.Elem(p.contact(ops, l.Constraints(), l.Index()))
+	for l.Init(c, q, ops, cs, len(p.contacts)); l.More(); l.Next() {
+		l.Elem(p.contact(c, ops, l.Constraints(), l.Index()))
 	}
 	dims = l.Layout()
 	dims = sysInset.End(dims)
@@ -514,10 +500,9 @@ func (p *contactsPage) Layout(ops *ui.Ops, cs layout.Constraints) layout.Dimens 
 	return f.Layout(c1, c2)
 }
 
-func (p *contactsPage) contact(ops *ui.Ops, cs layout.Constraints, index int) layout.Dimens {
+func (p *contactsPage) contact(c ui.Config, ops *ui.Ops, cs layout.Constraints, index int) layout.Dimens {
 	contact := p.contacts[index]
 	click := &p.clicks[index]
-	c := p.env.cfg
 	in := layout.UniformInset(ui.Dp(8))
 	cs = in.Begin(c, ops, cs)
 	f := (&layout.Flex{CrossAxisAlignment: layout.Center}).Init(ops, cs)
@@ -546,8 +531,8 @@ func (p *contactsPage) contact(ops *ui.Ops, cs layout.Constraints, index int) la
 	return dims
 }
 
-func (t *Topbar) Event(inputs input.Queue) interface{} {
-	for _, e := range t.backClick.Events(inputs) {
+func (t *Topbar) Event(c ui.Config, queue input.Queue) interface{} {
+	for _, e := range t.backClick.Events(queue) {
 		if e.Type == gesture.TypeClick {
 			return BackEvent{}
 		}
@@ -555,14 +540,13 @@ func (t *Topbar) Event(inputs input.Queue) interface{} {
 	return nil
 }
 
-func (t *Topbar) Begin(env *Env, ops *ui.Ops, cs layout.Constraints) layout.Constraints {
-	c := env.cfg
+func (t *Topbar) Begin(c ui.Config, insets app.Insets, ops *ui.Ops, cs layout.Constraints) layout.Constraints {
 	t.stack = layout.Stack{Alignment: layout.W}
-	topInset := env.insets.Top
+	topInset := insets.Top
 	t.insets2 = layout.Inset{
 		Top:   topInset,
-		Left:  env.insets.Left,
-		Right: env.insets.Right,
+		Left:  insets.Left,
+		Right: insets.Right,
 	}
 	t.stack.Init(ops, cs)
 	cs = t.stack.Rigid()
@@ -608,9 +592,7 @@ func newSignInPage(env *Env) *signInPage {
 		env:     env,
 		account: acc,
 		list: &layout.List{
-			Config: env.cfg,
-			Inputs: env.inputs,
-			Axis:   layout.Vertical,
+			Axis: layout.Vertical,
 		},
 		fields: []*formField{
 			&formField{Header: "Email address", Hint: "you@example.org", Value: &acc.User},
@@ -625,8 +607,6 @@ func newSignInPage(env *Env) *signInPage {
 	for _, f := range p.fields {
 		f.env = p.env
 		f.edit = &text.Editor{
-			Config:       env.cfg,
-			Inputs:       env.inputs,
 			Face:         env.faces.For(fonts.regular, ui.Sp(16)),
 			SingleLine:   true,
 			Hint:         f.Hint,
@@ -641,8 +621,8 @@ func newSignInPage(env *Env) *signInPage {
 func (p *signInPage) Start(stop <-chan struct{}) {
 }
 
-func (p *signInPage) Event() interface{} {
-	for _, e := range p.submit.Events(p.env.inputs) {
+func (p *signInPage) Event(c ui.Config, q input.Queue) interface{} {
+	for _, e := range p.submit.Events(q) {
 		if e.Type == gesture.TypeClick {
 			for _, f := range p.fields {
 				*f.Value = f.edit.Text()
@@ -653,8 +633,7 @@ func (p *signInPage) Event() interface{} {
 	return nil
 }
 
-func (p *signInPage) Layout(ops *ui.Ops, cs layout.Constraints) layout.Dimens {
-	c := p.env.cfg
+func (p *signInPage) Layout(c ui.Config, q input.Queue, ops *ui.Ops, cs layout.Constraints) layout.Dimens {
 	var dims layout.Dimens
 	f := layout.Flex{Axis: layout.Vertical, MainAxisAlignment: layout.Start}
 	f.Init(ops, cs)
@@ -662,7 +641,7 @@ func (p *signInPage) Layout(ops *ui.Ops, cs layout.Constraints) layout.Dimens {
 	cs = f.Rigid()
 	{
 		var t Topbar
-		cs = t.Begin(p.env, ops, cs)
+		cs = t.Begin(c, p.env.insets, ops, cs)
 		dims = text.Label{Material: colorMaterial(ops, rgb(0xffffff)), Face: p.env.faces.For(fonts.regular, ui.Sp(16)), Text: "Sign in"}.Layout(ops, cs)
 		dims = t.End(dims)
 	}
@@ -675,16 +654,15 @@ func (p *signInPage) Layout(ops *ui.Ops, cs layout.Constraints) layout.Dimens {
 		Bottom: p.env.insets.Bottom,
 	}
 	cs = sysInset.Begin(c, ops, cs)
-	dims = p.layoutSigninForm(ops, cs)
+	dims = p.layoutSigninForm(c, q, ops, cs)
 	dims = sysInset.End(dims)
 	c2 := f.End(dims)
 	return f.Layout(c1, c2)
 }
 
-func (p *signInPage) layoutSigninForm(ops *ui.Ops, cs layout.Constraints) layout.Dimens {
-	c := p.env.cfg
+func (p *signInPage) layoutSigninForm(c ui.Config, q input.Queue, ops *ui.Ops, cs layout.Constraints) layout.Dimens {
 	l := p.list
-	for l.Init(ops, cs, len(p.fields)+1); l.More(); l.Next() {
+	for l.Init(c, q, ops, cs, len(p.fields)+1); l.More(); l.Next() {
 		in := layout.Inset{Left: ui.Dp(32), Right: ui.Dp(32)}
 		var dims layout.Dimens
 		switch {
@@ -694,13 +672,13 @@ func (p *signInPage) layoutSigninForm(ops *ui.Ops, cs layout.Constraints) layout
 				in.Top = ui.Dp(32)
 			}
 			cs = in.Begin(c, ops, l.Constraints())
-			dims = p.fields[l.Index()].Layout(ops, cs)
+			dims = p.fields[l.Index()].Layout(c, q, ops, cs)
 			dims = in.End(dims)
 		default:
 			in.Bottom = ui.Dp(32)
 			align := layout.Align{Alignment: layout.E}
 			cs = in.Begin(c, ops, align.Begin(ops, cs))
-			dims = p.submit.Layout(p.env, ops, cs)
+			dims = p.submit.Layout(c, p.env, ops, cs)
 			dims = align.End(in.End(dims))
 		}
 		l.Elem(dims)
@@ -708,8 +686,7 @@ func (p *signInPage) layoutSigninForm(ops *ui.Ops, cs layout.Constraints) layout
 	return l.Layout()
 }
 
-func (f *formField) Layout(ops *ui.Ops, cs layout.Constraints) layout.Dimens {
-	c := f.env.cfg
+func (f *formField) Layout(c ui.Config, q input.Queue, ops *ui.Ops, cs layout.Constraints) layout.Dimens {
 	theme.text.Add(ops)
 	fl := (&layout.Flex{Axis: layout.Vertical}).Init(ops, cs)
 
@@ -719,17 +696,16 @@ func (f *formField) Layout(ops *ui.Ops, cs layout.Constraints) layout.Dimens {
 	dims := header.Layout(ops, cs)
 	dims.Size.Y += c.Px(ui.Dp(4))
 	c1 := fl.End(dims)
-	c2 := fl.End(f.edit.Layout(ops, fl.Rigid()))
+	c2 := fl.End(f.edit.Layout(c, q, ops, fl.Rigid()))
 	dims = fl.Layout(c1, c2)
 	return dims
 }
 
-func (b *Button) Events(inputs input.Queue) []gesture.ClickEvent {
-	return b.click.Events(inputs)
+func (b *Button) Events(queue input.Queue) []gesture.ClickEvent {
+	return b.click.Events(queue)
 }
 
-func (b *Button) Layout(env *Env, ops *ui.Ops, cs layout.Constraints) layout.Dimens {
-	c := env.cfg
+func (b *Button) Layout(c ui.Config, env *Env, ops *ui.Ops, cs layout.Constraints) layout.Dimens {
 	bg := Background{
 		Material: theme.brand,
 		Radius:   ui.Dp(4),
@@ -787,9 +763,7 @@ func newThreadsPage(env *Env) *threadsPage {
 	return &threadsPage{
 		env: env,
 		list: &layout.List{
-			Config: env.cfg,
-			Inputs: env.inputs,
-			Axis:   layout.Vertical,
+			Axis: layout.Vertical,
 		},
 		fab: &IconButton{
 			Icon:  &icon{src: icons.ContentCreate, size: ui.Dp(24)},
@@ -808,7 +782,7 @@ func (p *threadsPage) Start(stop <-chan struct{}) {
 	}()
 }
 
-func (p *threadsPage) Event() interface{} {
+func (p *threadsPage) Event(c ui.Config, q input.Queue) interface{} {
 	select {
 	case <-p.updates:
 		p.fetchThreads()
@@ -818,14 +792,14 @@ func (p *threadsPage) Event() interface{} {
 		p.env.redraw()
 	default:
 	}
-	for _, e := range p.fab.Events(p.env.inputs) {
+	for _, e := range p.fab.Events(q) {
 		if e.Type == gesture.TypeClick {
 			return ShowContactsEvent{}
 		}
 	}
 	for i := range p.clicks {
 		click := &p.clicks[i]
-		for _, e := range click.Events(p.env.inputs) {
+		for _, e := range click.Events(q) {
 			if e.Type == gesture.TypeClick {
 				t := p.threads[i]
 				return ShowThreadEvent{Thread: t.ID}
@@ -848,8 +822,7 @@ func (p *threadsPage) fetchThreads() {
 	}()
 }
 
-func (p *threadsPage) Layout(ops *ui.Ops, cs layout.Constraints) layout.Dimens {
-	c := p.env.cfg
+func (p *threadsPage) Layout(c ui.Config, q input.Queue, ops *ui.Ops, cs layout.Constraints) layout.Dimens {
 	st := layout.Stack{Alignment: layout.Center}
 	st.Init(ops, cs)
 
@@ -866,7 +839,7 @@ func (p *threadsPage) Layout(ops *ui.Ops, cs layout.Constraints) layout.Dimens {
 		cs = f.Rigid()
 		{
 			var t Topbar
-			cs = t.Begin(p.env, ops, cs)
+			cs = t.Begin(c, p.env.insets, ops, cs)
 			dims = text.Label{Material: theme.white, Face: p.env.faces.For(fonts.regular, ui.Sp(20)), Text: p.account.User}.Layout(ops, cs)
 			dims = t.End(dims)
 		}
@@ -874,7 +847,7 @@ func (p *threadsPage) Layout(ops *ui.Ops, cs layout.Constraints) layout.Dimens {
 
 		cs = f.Flexible(1)
 		cs = sysInset.Begin(c, ops, cs)
-		dims = p.layoutThreads(ops, cs)
+		dims = p.layoutThreads(c, q, ops, cs)
 		dims = sysInset.End(dims)
 		c4 := f.End(dims)
 		dims = f.Layout(c3, c4)
@@ -886,7 +859,7 @@ func (p *threadsPage) Layout(ops *ui.Ops, cs layout.Constraints) layout.Dimens {
 	al := layout.Align{Alignment: layout.SE}
 	in := layout.UniformInset(ui.Dp(16))
 	cs = in.Begin(c, ops, al.Begin(ops, cs))
-	dims = p.fab.Layout(p.env, ops, cs)
+	dims = p.fab.Layout(c, p.env, ops, cs)
 	dims = al.End(in.End(dims))
 	dims = sysInset.End(dims)
 	c2 := st.End(dims)
@@ -894,12 +867,12 @@ func (p *threadsPage) Layout(ops *ui.Ops, cs layout.Constraints) layout.Dimens {
 	return dims
 }
 
-func (p *threadsPage) layoutThreads(ops *ui.Ops, cs layout.Constraints) layout.Dimens {
+func (p *threadsPage) layoutThreads(c ui.Config, q input.Queue, ops *ui.Ops, cs layout.Constraints) layout.Dimens {
 	l := p.list
 	if l.Dragging() {
 		key.HideInputOp{}.Add(ops)
 	}
-	for l.Init(ops, cs, len(p.threads)); l.More(); l.Next() {
+	for l.Init(c, q, ops, cs, len(p.threads)); l.More(); l.Next() {
 		in := layout.Inset{}
 		switch l.Index() {
 		case 0:
@@ -907,8 +880,8 @@ func (p *threadsPage) layoutThreads(ops *ui.Ops, cs layout.Constraints) layout.D
 		case len(p.threads) - 1:
 			in.Bottom = ui.Dp(4)
 		}
-		cs := in.Begin(p.env.cfg, ops, l.Constraints())
-		dims := p.thread(ops, cs, l.Index())
+		cs := in.Begin(c, ops, l.Constraints())
+		dims := p.thread(c, ops, cs, l.Index())
 		dims = in.End(dims)
 		l.Elem(dims)
 	}
@@ -916,8 +889,7 @@ func (p *threadsPage) layoutThreads(ops *ui.Ops, cs layout.Constraints) layout.D
 	return dims
 }
 
-func (p *threadsPage) thread(ops *ui.Ops, cs layout.Constraints, index int) layout.Dimens {
-	c := p.env.cfg
+func (p *threadsPage) thread(c ui.Config, ops *ui.Ops, cs layout.Constraints, index int) layout.Dimens {
 	t := p.threads[index]
 	bgtexmat := theme.tertText
 	font := fonts.regular
@@ -993,15 +965,11 @@ func newThreadPage(env *Env, threadID string) *threadPage {
 		thread:    thread,
 		checkmark: &icon{src: icons.ActionDone, size: ui.Dp(12)},
 		list: &layout.List{
-			Config: env.cfg,
-			Inputs: env.inputs,
 			Axis:   layout.Vertical,
 			Invert: true,
 		},
 		result: make(chan []*Message, 1),
 		msgEdit: &text.Editor{
-			Config:       env.cfg,
-			Inputs:       env.inputs,
 			Face:         env.faces.For(fonts.regular, ui.Sp(14)),
 			Submit:       true,
 			Hint:         "Send a message",
@@ -1034,23 +1002,23 @@ func (p *threadPage) Start(stop <-chan struct{}) {
 	}()
 }
 
-func (p *threadPage) Event() interface{} {
+func (p *threadPage) Event(c ui.Config, q input.Queue) interface{} {
 	select {
 	case <-p.updates:
 		p.fetchMessages()
 	default:
 	}
-	for e, ok := p.msgEdit.Next(); ok; e, ok = p.msgEdit.Next() {
+	for e, ok := p.msgEdit.Next(c, q); ok; e, ok = p.msgEdit.Next(c, q) {
 		if _, ok := e.(text.SubmitEvent); ok {
 			p.sendMessage()
 		}
 	}
-	for _, e := range p.send.Events(p.env.inputs) {
+	for _, e := range p.send.Events(q) {
 		if e.Type == gesture.TypeClick {
 			p.sendMessage()
 		}
 	}
-	for _, e := range p.invite.Events(p.env.inputs) {
+	for _, e := range p.invite.Events(q) {
 		if e.Type == gesture.TypeClick {
 			if err := p.env.client.Send(p.thread.ID, "Invitation sent"); err != nil {
 				log.Printf("failed to send invitation: %v", err)
@@ -1058,7 +1026,7 @@ func (p *threadPage) Event() interface{} {
 			break
 		}
 	}
-	for _, e := range p.accept.Events(p.env.inputs) {
+	for _, e := range p.accept.Events(q) {
 		if e.Type == gesture.TypeClick {
 			if err := p.env.client.Send(p.thread.ID, "Invitation accepted"); err != nil {
 				log.Printf("failed to send invitation accept: %v", err)
@@ -1066,7 +1034,7 @@ func (p *threadPage) Event() interface{} {
 			break
 		}
 	}
-	return p.topbar.Event(p.env.inputs)
+	return p.topbar.Event(c, q)
 }
 
 func (p *threadPage) sendMessage() {
@@ -1078,8 +1046,7 @@ func (p *threadPage) sendMessage() {
 	}
 }
 
-func (p *threadPage) Layout(ops *ui.Ops, cs layout.Constraints) layout.Dimens {
-	c := p.env.cfg
+func (p *threadPage) Layout(c ui.Config, q input.Queue, ops *ui.Ops, cs layout.Constraints) layout.Dimens {
 	l := p.list
 	if l.Dragging() {
 		key.HideInputOp{}.Add(ops)
@@ -1093,7 +1060,7 @@ func (p *threadPage) Layout(ops *ui.Ops, cs layout.Constraints) layout.Dimens {
 	f.Init(ops, cs)
 	{
 		cs = f.Rigid()
-		cs = p.topbar.Begin(p.env, ops, cs)
+		cs = p.topbar.Begin(c, p.env.insets, ops, cs)
 		dims = text.Label{Material: theme.white, Face: p.env.faces.For(fonts.regular, ui.Sp(20)), Text: p.thread.ID}.Layout(ops, cs)
 		dims = p.topbar.End(dims)
 	}
@@ -1112,11 +1079,11 @@ func (p *threadPage) Layout(ops *ui.Ops, cs layout.Constraints) layout.Dimens {
 		cs = in.Begin(c, ops, cs)
 		switch {
 		case p.thread.PendingInvitation:
-			dims = p.accept.Layout(p.env, ops, cs)
+			dims = p.accept.Layout(c, p.env, ops, cs)
 		case p.env.client.ContainsSession(p.thread.ID):
-			dims = p.layoutMessageBox(ops, cs)
+			dims = p.layoutMessageBox(c, q, ops, cs)
 		default:
-			dims = p.invite.Layout(p.env, ops, cs)
+			dims = p.invite.Layout(c, p.env, ops, cs)
 		}
 		dims = in.End(dims)
 		dims = sysInset.End(dims)
@@ -1127,8 +1094,8 @@ func (p *threadPage) Layout(ops *ui.Ops, cs layout.Constraints) layout.Dimens {
 		cs = f.Flexible(1)
 		cs.Height.Min = cs.Height.Max
 		cs = sysInset.Begin(c, ops, cs)
-		for l.Init(ops, cs, len(p.messages)); l.More(); l.Next() {
-			l.Elem(p.message(ops, l.Constraints(), l.Index()))
+		for l.Init(c, q, ops, cs, len(p.messages)); l.More(); l.Next() {
+			l.Elem(p.message(c, ops, l.Constraints(), l.Index()))
 		}
 		dims = l.Layout()
 		dims = sysInset.End(dims)
@@ -1137,8 +1104,7 @@ func (p *threadPage) Layout(ops *ui.Ops, cs layout.Constraints) layout.Dimens {
 	return f.Layout(c1, c2, c3)
 }
 
-func (p *threadPage) layoutMessageBox(ops *ui.Ops, cs layout.Constraints) layout.Dimens {
-	c := p.env.cfg
+func (p *threadPage) layoutMessageBox(c ui.Config, q input.Queue, ops *ui.Ops, cs layout.Constraints) layout.Dimens {
 	if mh := c.Px(ui.Dp(100)); cs.Height.Max > mh {
 		cs.Height.Max = mh
 	}
@@ -1150,7 +1116,7 @@ func (p *threadPage) layoutMessageBox(ops *ui.Ops, cs layout.Constraints) layout
 		cs = f.Rigid()
 		in := layout.Inset{Left: ui.Dp(8)}
 		cs = in.Begin(c, ops, cs)
-		dims = p.send.Layout(p.env, ops, cs)
+		dims = p.send.Layout(c, p.env, ops, cs)
 		sendHeight = dims.Size.Y
 		dims = in.End(dims)
 	}
@@ -1171,7 +1137,7 @@ func (p *threadPage) layoutMessageBox(ops *ui.Ops, cs layout.Constraints) layout
 		align := layout.Align{Alignment: layout.W}
 		cs = align.Begin(ops, cs)
 		cs.Width.Min = cs.Width.Max
-		dims = p.msgEdit.Layout(ops, cs)
+		dims = p.msgEdit.Layout(c, q, ops, cs)
 		dims = align.End(dims)
 		dims = bg.End(dims)
 	}
@@ -1179,8 +1145,7 @@ func (p *threadPage) layoutMessageBox(ops *ui.Ops, cs layout.Constraints) layout
 	return f.Layout(c1, c2)
 }
 
-func (p *threadPage) message(ops *ui.Ops, cs layout.Constraints, index int) layout.Dimens {
-	c := p.env.cfg
+func (p *threadPage) message(c ui.Config, ops *ui.Ops, cs layout.Constraints, index int) layout.Dimens {
 	msg := p.messages[index]
 	var dims layout.Dimens
 	in := layout.Inset{Top: ui.Dp(8), Left: ui.Dp(8), Right: ui.Dp(40)}
@@ -1279,12 +1244,11 @@ func formatTime(t time.Time) string {
 	return t.Format(format)
 }
 
-func (b *IconButton) Events(inputs input.Queue) []gesture.ClickEvent {
-	return b.click.Events(inputs)
+func (b *IconButton) Events(queue input.Queue) []gesture.ClickEvent {
+	return b.click.Events(queue)
 }
 
-func (b *IconButton) Layout(env *Env, ops *ui.Ops, cs layout.Constraints) layout.Dimens {
-	c := env.cfg
+func (b *IconButton) Layout(c ui.Config, env *Env, ops *ui.Ops, cs layout.Constraints) layout.Dimens {
 	ico := b.Icon.image(c, rgb(0xffffff))
 	bg := Background{
 		Material: theme.brand,
@@ -1301,22 +1265,22 @@ func (b *IconButton) Layout(env *Env, ops *ui.Ops, cs layout.Constraints) layout
 	return dims
 }
 
-func (a *App) update() {
+func (a *App) update(c ui.Config, q input.Queue) {
 	page := a.stack.Current()
-	if e := page.Event(); e != nil {
+	if e := page.Event(c, q); e != nil {
 		switch e := e.(type) {
 		case BackEvent:
 			a.stack.Pop()
 		case SignInEvent:
 			a.env.client.SetAccount(e.Account)
-			a.stack.Clear(newThreadsPage(a.env))
+			a.stack.Clear(newThreadsPage(&a.env))
 		case NewThreadEvent:
 			a.stack.Pop()
-			a.stack.Push(newThreadPage(a.env, e.Address))
+			a.stack.Push(newThreadPage(&a.env, e.Address))
 		case ShowContactsEvent:
-			a.stack.Push(newContactsPage(a.env))
+			a.stack.Push(newContactsPage(&a.env))
 		case ShowThreadEvent:
-			a.stack.Push(newThreadPage(a.env, e.Thread))
+			a.stack.Push(newThreadPage(&a.env, e.Thread))
 		}
 	}
 }
