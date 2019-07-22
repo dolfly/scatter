@@ -191,10 +191,6 @@ var theme struct {
 }
 
 func uiMain() {
-	app.Main()
-}
-
-func init() {
 	fonts.regular = mustLoadFont(goregular.TTF)
 	fonts.bold = mustLoadFont(gobold.TTF)
 	fonts.italic = mustLoadFont(goitalic.TTF)
@@ -214,6 +210,7 @@ func init() {
 			log.Fatal(err)
 		}
 	}()
+	app.Main()
 }
 
 func colorMaterial(ops *ui.Ops, color color.RGBA) ui.MacroOp {
