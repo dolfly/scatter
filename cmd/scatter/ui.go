@@ -58,6 +58,11 @@ type App struct {
 	lastMallocs uint64
 }
 
+type Transition struct {
+	prev, page Page
+	time       time.Time
+}
+
 type pageStack struct {
 	pages    []Page
 	stopChan chan<- struct{}
@@ -296,6 +301,47 @@ func newApp(w *app.Window) *App {
 	return a
 }
 
+func (t *Transition) Start(stop <-chan struct{}) {
+	t.page.Start(stop)
+}
+
+func (t *Transition) Event(c ui.Config, q input.Queue) interface{} {
+	return t.page.Event(c, q)
+}
+
+func (t *Transition) Layout(c ui.Config, q input.Queue, ops *ui.Ops, cs layout.Constraints) layout.Dimens {
+	var stack ui.StackOp
+	stack.Push(ops)
+	if t.prev != nil {
+		now := c.Now()
+		if t.time.IsZero() {
+			t.time = now
+		}
+		t.prev.Layout(c, q, ops, cs)
+		size := f32.Point{X: float32(cs.Width.Max), Y: float32(cs.Height.Max)}
+		max := float32(math.Sqrt(float64(size.X*size.X + size.Y*size.Y)))
+		progress := float32(now.Sub(t.time).Seconds()) * 3
+		progress = progress * progress // Accelerate
+		diameter := progress * max
+		radius := diameter / 2
+		if progress >= 1 {
+			// Stop animation when complete.
+			t.prev = nil
+		}
+		ui.InvalidateOp{}.Add(ops)
+		center := size.Mul(.5)
+		clipCenter := f32.Point{X: diameter / 2, Y: diameter / 2}
+		off := center.Sub(clipCenter)
+		ui.TransformOp{Transform: ui.Offset(off.Mul(1))}.Add(ops)
+		rrect(ops, diameter, diameter, radius, radius, radius, radius)
+		ui.TransformOp{Transform: ui.Offset(off.Mul(-1))}.Add(ops)
+		fill{theme.white}.Layout(ops, cs)
+	}
+	dims := t.page.Layout(c, q, ops, cs)
+	stack.Pop()
+	return dims
+}
+
 func (s *pageStack) Len() int {
 	return len(s.pages)
 }
@@ -323,6 +369,12 @@ func (s *pageStack) start() {
 func (s *pageStack) Push(p Page) {
 	if s.stopChan != nil {
 		s.stop()
+	}
+	if len(s.pages) > 0 {
+		p = &Transition{
+			prev: s.Current(),
+			page: p,
+		}
 	}
 	s.pages = append(s.pages, p)
 	s.start()
