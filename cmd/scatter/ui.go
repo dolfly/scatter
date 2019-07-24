@@ -886,6 +886,15 @@ func (p *threadsPage) layoutThreads(c ui.Config, q input.Queue, ops *ui.Ops, cs 
 	return dims
 }
 
+var contactColors = []color.RGBA{
+	{A: 0xff, R: 0xef, G: 0x6c, B: 0x00},
+	{A: 0xff, R: 0x00, G: 0x57, B: 0x9b},
+	{A: 0xff, R: 0x00, G: 0x97, B: 0xa7},
+	{A: 0xff, R: 0x00, G: 0x4d, B: 0x40},
+	{A: 0xff, R: 0x7b, G: 0x1f, B: 0xa2},
+	{A: 0xff, R: 0x00, G: 0x89, B: 0x7b},
+}
+
 func (p *threadsPage) thread(c ui.Config, ops *ui.Ops, cs layout.Constraints, index int) layout.Dimens {
 	t := p.threads[index]
 	bgtexmat := theme.tertText
@@ -911,7 +920,9 @@ func (p *threadsPage) thread(c ui.Config, ops *ui.Ops, cs layout.Constraints, in
 			cs = cc.Begin(ops, in.Begin(c, ops, cs))
 			sz := image.Point{X: c.Px(ui.Dp(48)), Y: c.Px(ui.Dp(48))}
 			cs = layout.RigidConstraints(cs.Constrain(sz))
-			dims = fill{theme.brand}.Layout(ops, cs)
+			color := contactColors[index%len(contactColors)]
+			mat := colorMaterial(ops, color)
+			dims = fill{mat}.Layout(ops, cs)
 			dims = in.End(cc.End(dims))
 		}
 		c1 := f.End(dims)
