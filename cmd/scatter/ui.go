@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"unicode"
 
 	"golang.org/x/image/draw"
 
@@ -918,11 +919,32 @@ func (p *threadsPage) thread(c ui.Config, ops *ui.Ops, cs layout.Constraints, in
 			in := layout.Inset{Right: ui.Dp(12), Left: ui.Dp(4)}
 			cc := clipCircle{}
 			cs = cc.Begin(ops, in.Begin(c, ops, cs))
+
+			st := layout.Stack{Alignment: layout.Center}
+			st.Init(ops, cs)
+
+			// Background color
+			cs = st.Rigid()
 			sz := image.Point{X: c.Px(ui.Dp(48)), Y: c.Px(ui.Dp(48))}
 			cs = layout.RigidConstraints(cs.Constrain(sz))
 			color := contactColors[index%len(contactColors)]
 			mat := colorMaterial(ops, color)
 			dims = fill{mat}.Layout(ops, cs)
+			c1 := st.End(dims)
+
+			// Contact initial.
+			cs = st.Rigid()
+			initial := ""
+			for _, c := range t.ID {
+				initial = string(unicode.ToUpper(c))
+				break
+			}
+			face := p.env.faces.For(fonts.regular, ui.Sp(24))
+			dims = text.Label{Material: theme.white, Face: face, Text: initial}.Layout(ops, cs)
+			c2 := st.End(dims)
+
+			dims = st.Layout(c1, c2)
+
 			dims = in.End(cc.End(dims))
 		}
 		c1 := f.End(dims)
