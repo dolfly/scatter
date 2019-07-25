@@ -60,6 +60,7 @@ type App struct {
 
 type Transition struct {
 	prev, page Page
+	reverse    bool
 	time       time.Time
 }
 
@@ -312,22 +313,30 @@ func (t *Transition) Event(c ui.Config, q input.Queue) interface{} {
 func (t *Transition) Layout(c ui.Config, q input.Queue, ops *ui.Ops, cs layout.Constraints) layout.Dimens {
 	var stack ui.StackOp
 	stack.Push(ops)
-	if t.prev != nil {
+	var dims layout.Dimens
+	prev, page := t.prev, t.page
+	if prev != nil {
+		if t.reverse {
+			prev, page = page, prev
+		}
 		now := c.Now()
 		if t.time.IsZero() {
 			t.time = now
 		}
-		t.prev.Layout(c, q, ops, cs)
+		prev.Layout(c, q, ops, cs)
 		size := f32.Point{X: float32(cs.Width.Max), Y: float32(cs.Height.Max)}
 		max := float32(math.Sqrt(float64(size.X*size.X + size.Y*size.Y)))
 		progress := float32(now.Sub(t.time).Seconds()) * 3
 		progress = progress * progress // Accelerate
-		diameter := progress * max
-		radius := diameter / 2
 		if progress >= 1 {
 			// Stop animation when complete.
 			t.prev = nil
 		}
+		if t.reverse {
+			progress = 1 - progress
+		}
+		diameter := progress * max
+		radius := diameter / 2
 		ui.InvalidateOp{}.Add(ops)
 		center := size.Mul(.5)
 		clipCenter := f32.Point{X: diameter / 2, Y: diameter / 2}
@@ -337,7 +346,7 @@ func (t *Transition) Layout(c ui.Config, q input.Queue, ops *ui.Ops, cs layout.C
 		ui.TransformOp{Transform: ui.Offset(off.Mul(-1))}.Add(ops)
 		fill{theme.white}.Layout(ops, cs)
 	}
-	dims := t.page.Layout(c, q, ops, cs)
+	dims = page.Layout(c, q, ops, cs)
 	stack.Pop()
 	return dims
 }
@@ -353,9 +362,15 @@ func (s *pageStack) Current() Page {
 func (s *pageStack) Pop() {
 	s.stop()
 	i := len(s.pages) - 1
+	prev := s.pages[i]
 	s.pages[i] = nil
 	s.pages = s.pages[:i]
 	if len(s.pages) > 0 {
+		s.pages[i-1] = &Transition{
+			reverse: true,
+			prev:    prev,
+			page:    s.Current(),
+		}
 		s.start()
 	}
 }
