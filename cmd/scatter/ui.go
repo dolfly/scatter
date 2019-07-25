@@ -381,6 +381,15 @@ func (s *pageStack) start() {
 	s.Current().Start(stop)
 }
 
+func (s *pageStack) Swap(p Page) {
+	prev := s.pages[len(s.pages)-1]
+	s.pages[len(s.pages)-1] = &Transition{
+		prev: prev,
+		page: p,
+	}
+	s.start()
+}
+
 func (s *pageStack) Push(p Page) {
 	if s.stopChan != nil {
 		s.stop()
@@ -1372,8 +1381,7 @@ func (a *App) update(c ui.Config, q input.Queue) {
 			a.env.client.SetAccount(e.Account)
 			a.stack.Clear(newThreadsPage(&a.env))
 		case NewThreadEvent:
-			a.stack.Pop()
-			a.stack.Push(newThreadPage(&a.env, e.Address))
+			a.stack.Swap(newThreadPage(&a.env, e.Address))
 		case ShowContactsEvent:
 			a.stack.Push(newContactsPage(&a.env))
 		case ShowThreadEvent:
